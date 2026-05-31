@@ -35,9 +35,9 @@
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
                                 <VerticalStackLayout Spacing="3">
                                     <Label Text="登录" Style="{StaticResource SectionTitle}" />
-                                    <Label Text="当前仅支持直连模式；VPN 链接模式暂不可用。" Style="{StaticResource Caption}" />
+                                    <Label Text="支持校园网直连 / WebVPN 登录。" Style="{StaticResource Caption}" />
                                 </VerticalStackLayout>
-                                <Switch x:Name="VpnSwitch" Grid.Column="1" IsEnabled="False" Toggled="OnVpnToggled" />
+                                <Switch x:Name="VpnSwitch" Grid.Column="1" Toggled="OnVpnToggled" />
                             </Grid>
 
                             <Label Text="学号" FontFamily="OpenSansSemibold" FontSize="12" TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}" />
@@ -68,6 +68,33 @@
                                 TextColor="{AppThemeBinding Light={StaticResource Primary}, Dark={StaticResource TextStrongDark}}"
                                 Clicked="OnLoginClicked" />
                             <Label x:Name="LoginErrorLabel" IsVisible="False" FontSize="13" TextColor="{StaticResource Danger}" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <Border Padding="14" BackgroundColor="{AppThemeBinding Light={StaticResource PanelRaised}, Dark={StaticResource PanelRaisedDark}}">
+                        <VerticalStackLayout Spacing="9">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                                <VerticalStackLayout Spacing="3">
+                                    <Label Text="软件更新" Style="{StaticResource SectionTitle}" />
+                                    <Label x:Name="UpdateStatusLabel" Text="当前版本 1.1.0，可手动检查 GitHub 发布版本。" Style="{StaticResource Caption}" />
+                                </VerticalStackLayout>
+                                <Button
+                                    x:Name="CheckUpdateButton"
+                                    Grid.Column="1"
+                                    Text="检查"
+                                    BackgroundColor="{AppThemeBinding Light={StaticResource ControlBg}, Dark={StaticResource ControlBgDark}}"
+                                    TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}"
+                                    Clicked="OnCheckUpdateClicked" />
+                            </Grid>
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <Border Padding="14" BackgroundColor="{AppThemeBinding Light={StaticResource PanelRaised}, Dark={StaticResource PanelRaisedDark}}">
+                        <VerticalStackLayout Spacing="6">
+                            <Label Text="使用提醒" Style="{StaticResource SectionTitle}" />
+                            <Label Text="本项目仅用于个人学习与研究交流，请遵守北京航空航天大学相关规定，使用后果由使用者自行承担。" Style="{StaticResource Caption}" />
+                            <Label Text="账号密码仅用于本机与学校系统通信，应用不会收集或上传个人账号与密码。" Style="{StaticResource Caption}" />
+                            <Label Text="学校服务器目前不支持补签，请在上课时间内完成；网络波动可能导致失败，请确认页面显示成功后再离开。" Style="{StaticResource Caption}" />
                         </VerticalStackLayout>
                     </Border>
 

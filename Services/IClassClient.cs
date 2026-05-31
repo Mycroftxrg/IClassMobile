@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -9,19 +10,12 @@ namespace IClassMobile.Services;
 
 public sealed class IClassClient : IDisposable
 {
-    private const string SsoVpnLogin = "https://d.buaa.edu.cn/https/77726476706e69737468656265737421e3e44ed225256951300d8db9d6562d/login?service=https%3A%2F%2Fd.buaa.edu.cn%2Flogin%3Fcas_login%3Dtrue";
-    private const string VpnBase = "https://d.buaa.edu.cn/https-8347/77726476706e69737468656265737421f9f44d9d342326526b0988e29d51367ba018";
     private const string DirectBase = "https://iclass.buaa.edu.cn:8347";
+    private const string Direct8081Base = "http://iclass.buaa.edu.cn:8081";
+    private const string MyCenterUrl = "https://iclass.buaa.edu.cn:8346/?type=jumpMyCenter";
+    private const string VpnServiceLogin = "https://d.buaa.edu.cn/login?cas_login=true";
+    private static readonly string SsoVpnLogin = WebVpnUrl.Wrap($"https://sso.buaa.edu.cn/login?service={Escape(VpnServiceLogin)}");
     private const long VpnOffsetCorrectionMs = -1000;
-
-    private static readonly IClassUrls VpnUrls = new(
-        ServiceHome: VpnBase,
-        UserLogin: $"{VpnBase}/app/user/login.action",
-        CourseList: $"{VpnBase}/app/choosecourse/get_myall_course.action",
-        SemesterList: $"{VpnBase}/app/course/get_base_school_year.action",
-        CourseSignDetail: $"{VpnBase}/app/my/get_my_course_sign_detail.action",
-        ScanSign: $"{VpnBase}/app/course/stu_scan_sign.action",
-        CourseScheduleByDate: $"{VpnBase}/app/course/get_stu_course_sched.action");
 
     private static readonly IClassUrls DirectUrls = new(
         ServiceHome: DirectBase,
@@ -29,17 +23,18 @@ public sealed class IClassClient : IDisposable
         CourseList: $"{DirectBase}/app/choosecourse/get_myall_course.action",
         SemesterList: $"{DirectBase}/app/course/get_base_school_year.action",
         CourseSignDetail: $"{DirectBase}/app/my/get_my_course_sign_detail.action",
-        ScanSign: "http://iclass.buaa.edu.cn:8081/app/course/stu_scan_sign.action",
+        ScanSign: $"{Direct8081Base}/app/course/stu_scan_sign.action",
+        Timestamp: $"{Direct8081Base}/app/common/get_timestamp.action",
         CourseScheduleByDate: $"{DirectBase}/app/course/get_stu_course_sched.action");
 
     private readonly bool _useVpn;
-    private readonly HttpClientHandler _handler;
+    private readonly SocketsHttpHandler _handler;
     private readonly HttpClient _http;
 
     public IClassClient(bool useVpn)
     {
         _useVpn = useVpn;
-        _handler = new HttpClientHandler
+        _handler = new SocketsHttpHandler
         {
             CookieContainer = new CookieContainer(),
             UseCookies = true,
@@ -58,7 +53,7 @@ public sealed class IClassClient : IDisposable
 
     public long ServerTimeOffsetMs { get; private set; }
 
-    private IClassUrls Urls => _useVpn ? VpnUrls : DirectUrls;
+    private IClassUrls Urls => _useVpn ? DirectUrls.WrapForWebVpn() : DirectUrls;
 
     public async Task<IClassLoginResult> LoginAsync(IClassLoginInput input, CancellationToken cancellationToken = default)
     {
@@ -73,7 +68,7 @@ public sealed class IClassClient : IDisposable
             await VpnLoginAsync(input.VpnUsername ?? string.Empty, input.VpnPassword ?? string.Empty, cancellationToken);
         }
 
-        await FetchUserInfoAsync(studentId, cancellationToken);
+        await FetchUserInfoWithCandidatesAsync(studentId, cancellationToken);
 
         if (User is null || string.IsNullOrWhiteSpace(SessionId))
         {
@@ -282,20 +277,27 @@ public sealed class IClassClient : IDisposable
         return details;
     }
 
-    public async Task<IReadOnlyList<CourseDetailItem>> GetMergedCourseDetailsAsync(int futureDays = 7, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<CourseDetailItem>> GetMergedCourseDetailsAsync(
+        int futureDays = 7,
+        IProgress<string>? progress = null,
+        CancellationToken cancellationToken = default)
     {
+        progress?.Report("正在获取学期信息...");
         var semesterCode = await GetCurrentSemesterAsync(cancellationToken);
         if (string.IsNullOrWhiteSpace(semesterCode))
         {
             throw new InvalidOperationException("未获取到当前学期");
         }
 
+        progress?.Report("正在读取课程列表...");
         var courses = await GetCoursesAsync(semesterCode, cancellationToken);
+        progress?.Report("正在获取签到信息...");
         var fromDetail = await GetCourseDetailsAsync(courses, cancellationToken);
         var fromDateQuery = new List<CourseDetailItem>();
 
         for (var offset = 0; offset <= futureDays; offset++)
         {
+            progress?.Report(offset == 0 ? "正在同步今日课程..." : $"正在同步未来第 {offset} 天课程...");
             var dateStr = DateTime.Today.AddDays(offset).ToString("yyyyMMdd", CultureInfo.InvariantCulture);
             var dayDetails = await GetCourseByDateAsync(dateStr, cancellationToken);
             fromDateQuery.AddRange(dayDetails);
@@ -312,10 +314,9 @@ public sealed class IClassClient : IDisposable
             throw new InvalidOperationException("courseSchedId 不能为空");
         }
 
-        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + ServerTimeOffsetMs;
+        var timestamp = await GetServerTimestampAsync(cancellationToken);
         var url = WithQuery(Urls.ScanSign, new Dictionary<string, string>
         {
-            ["id"] = User!.Id,
             ["courseSchedId"] = courseSchedId,
             ["timestamp"] = timestamp.ToString(CultureInfo.InvariantCulture)
         });
@@ -325,6 +326,10 @@ public sealed class IClassClient : IDisposable
         request.Headers.TryAddWithoutValidation("Accept", "application/json");
         request.Headers.TryAddWithoutValidation("Accept-Language", "zh-CN,zh;q=0.9");
         request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Linux; Android 13; M2012K11AC Build/TKQ1.221114.001; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0.0.0 Mobile Safari/537.36 wxwork/4.1.30 MicroMessenger/7.0.1 Language/zh");
+        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            ["id"] = User!.Id
+        });
 
         using var response = await _http.SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -450,12 +455,50 @@ public sealed class IClassClient : IDisposable
 
     private async Task EnterIclassServiceAsync(CancellationToken cancellationToken)
     {
-        using var response = await FollowGetRedirectsAsync($"{VpnUrls.ServiceHome.TrimEnd('/')}/", cancellationToken);
+        using var response = await FollowGetRedirectsAsync($"{Urls.ServiceHome.TrimEnd('/')}/", cancellationToken);
         var finalUrl = response.RequestMessage?.RequestUri?.ToString() ?? $"status {(int)response.StatusCode}";
         if (!LooksLikeIclassUrl(finalUrl))
         {
             throw new InvalidOperationException($"VPN 登录后进入 iClass 失败，最终 URL: {finalUrl}");
         }
+    }
+
+    private async Task<string> ResolveLoginNameAsync(string fallback, CancellationToken cancellationToken)
+    {
+        var current = _useVpn ? WebVpnUrl.Wrap(MyCenterUrl) : MyCenterUrl;
+        for (var i = 0; i < 8; i++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, current);
+            using var response = await _http.SendAsync(request, cancellationToken);
+            var requestUrl = WebVpnUrl.Unwrap(response.RequestMessage?.RequestUri?.ToString() ?? current);
+            var loginName = ExtractLoginName(requestUrl);
+            if (!string.IsNullOrWhiteSpace(loginName))
+            {
+                return loginName;
+            }
+
+            var location = response.Headers.Location?.ToString();
+            if (!string.IsNullOrWhiteSpace(location))
+            {
+                var resolved = ResolveUrl(current, location);
+                var normalized = WebVpnUrl.Unwrap(resolved);
+                loginName = ExtractLoginName(normalized);
+                if (!string.IsNullOrWhiteSpace(loginName))
+                {
+                    return loginName;
+                }
+
+                if (IsRedirect(response.StatusCode))
+                {
+                    current = _useVpn ? WebVpnUrl.Wrap(normalized) : normalized;
+                    continue;
+                }
+            }
+
+            break;
+        }
+
+        return fallback;
     }
 
     private async Task<HttpResponseMessage> FollowGetRedirectsAsync(string url, CancellationToken cancellationToken)
@@ -511,7 +554,10 @@ public sealed class IClassClient : IDisposable
 
         if (GetString(doc.RootElement, "STATUS") != "0")
         {
-            throw new InvalidOperationException($"iClass API 返回错误: {body[..Math.Min(body.Length, 300)]}");
+            throw new IClassApiException(
+                GetString(doc.RootElement, "ERRCODE"),
+                GetString(doc.RootElement, "ERRMSG"),
+                $"iClass API 返回错误: {body[..Math.Min(body.Length, 300)]}");
         }
 
         if (!doc.RootElement.TryGetProperty("result", out var result) || result.ValueKind != JsonValueKind.Object)
@@ -532,6 +578,73 @@ public sealed class IClassClient : IDisposable
         SessionId = sessionId;
     }
 
+    private async Task FetchUserInfoWithCandidatesAsync(string studentId, CancellationToken cancellationToken)
+    {
+        var candidates = new List<string> { studentId };
+        var resolvedLoginName = await ResolveLoginNameAsync(studentId, cancellationToken);
+        if (!resolvedLoginName.Equals(studentId, StringComparison.OrdinalIgnoreCase))
+        {
+            candidates.Add(resolvedLoginName);
+        }
+
+        var hashedLoginName = BuildMd5Base64LoginName(studentId);
+        if (!candidates.Contains(hashedLoginName, StringComparer.OrdinalIgnoreCase))
+        {
+            candidates.Add(hashedLoginName);
+        }
+
+        IClassApiException? lastApiError = null;
+        foreach (var candidate in candidates.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            try
+            {
+                await FetchUserInfoAsync(candidate, cancellationToken);
+                return;
+            }
+            catch (IClassApiException ex) when (ex.ErrorCode == "106")
+            {
+                lastApiError = ex;
+            }
+        }
+
+        throw new InvalidOperationException(lastApiError?.ErrorMessage is { Length: > 0 }
+            ? $"iClass API 返回错误: {lastApiError.ErrorMessage}"
+            : "iClass 不接受当前学号作为登录名，请尝试 WebVPN 模式或确认学校接口是否已调整。");
+    }
+
+    private async Task<long> GetServerTimestampAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, Urls.Timestamp);
+            if (!string.IsNullOrWhiteSpace(SessionId))
+            {
+                request.Headers.TryAddWithoutValidation("sessionId", SessionId);
+            }
+
+            using var response = await _http.SendAsync(request, cancellationToken);
+            var body = await response.Content.ReadAsStringAsync(cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return FallbackTimestamp();
+            }
+
+            using var doc = ParseJsonOrNull(body);
+            if (doc is not null &&
+                doc.RootElement.TryGetProperty("timestamp", out var timestampElement) &&
+                long.TryParse(GetElementString(timestampElement), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed))
+            {
+                return parsed;
+            }
+        }
+        catch
+        {
+            // Fall back to the Date-header offset synced during login.
+        }
+
+        return FallbackTimestamp();
+    }
+
     private void SyncServerTime(HttpResponseMessage response)
     {
         if (response.Headers.Date is not { } serverDate)
@@ -545,6 +658,8 @@ public sealed class IClassClient : IDisposable
         var rawOffset = serverMs - localMs;
         ServerTimeOffsetMs = _useVpn ? rawOffset + VpnOffsetCorrectionMs : rawOffset;
     }
+
+    private long FallbackTimestamp() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + ServerTimeOffsetMs;
 
     private void EnsureLoggedIn()
     {
@@ -647,6 +762,11 @@ public sealed class IClassClient : IDisposable
             return string.Empty;
         }
 
+        return GetElementString(value);
+    }
+
+    private static string GetElementString(JsonElement value)
+    {
         return value.ValueKind switch
         {
             JsonValueKind.String => value.GetString() ?? string.Empty,
@@ -685,10 +805,35 @@ public sealed class IClassClient : IDisposable
             : new Uri(new Uri(baseUrl), location).ToString();
     }
 
+    private static string ExtractLoginName(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed))
+        {
+            return string.Empty;
+        }
+
+        foreach (var part in parsed.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var pair = part.Split('=', 2);
+            if (pair.Length == 2 && pair[0].Equals("loginName", StringComparison.OrdinalIgnoreCase))
+            {
+                return Uri.UnescapeDataString(pair[1]);
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string BuildMd5Base64LoginName(string studentId)
+    {
+        var md5Hex = Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(studentId.Trim())));
+        return Convert.ToBase64String(Encoding.UTF8.GetBytes(md5Hex));
+    }
+
     private static bool LooksLikeIclassUrl(string url)
     {
-        return url.Contains("iclass.buaa.edu.cn", StringComparison.OrdinalIgnoreCase)
-            || url.Contains("d.buaa.edu.cn/https-834", StringComparison.OrdinalIgnoreCase);
+        var normalized = WebVpnUrl.Unwrap(url);
+        return normalized.Contains("iclass.buaa.edu.cn", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool LooksLikeVpnPortalHome(string url)
@@ -698,7 +843,7 @@ public sealed class IClassClient : IDisposable
             return false;
         }
 
-        return parsed.Host.Equals("d.buaa.edu.cn", StringComparison.OrdinalIgnoreCase)
+        return WebVpnUrl.IsGatewayUrl(url)
             && !parsed.AbsolutePath.Contains("/login", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -709,7 +854,29 @@ public sealed class IClassClient : IDisposable
         string SemesterList,
         string CourseSignDetail,
         string ScanSign,
-        string CourseScheduleByDate);
+        string Timestamp,
+        string CourseScheduleByDate)
+    {
+        public IClassUrls WrapForWebVpn()
+        {
+            return new IClassUrls(
+                WebVpnUrl.Wrap(ServiceHome),
+                WebVpnUrl.Wrap(UserLogin),
+                WebVpnUrl.Wrap(CourseList),
+                WebVpnUrl.Wrap(SemesterList),
+                WebVpnUrl.Wrap(CourseSignDetail),
+                WebVpnUrl.Wrap(ScanSign),
+                WebVpnUrl.Wrap(Timestamp),
+                WebVpnUrl.Wrap(CourseScheduleByDate));
+        }
+    }
+}
+
+public sealed class IClassApiException(string errorCode, string errorMessage, string message) : InvalidOperationException(message)
+{
+    public string ErrorCode { get; } = errorCode;
+
+    public string ErrorMessage { get; } = errorMessage;
 }
 
 public sealed record IClassLoginInput(string StudentId, string? VpnUsername, string? VpnPassword);

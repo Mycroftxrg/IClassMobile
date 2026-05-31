@@ -31,6 +31,7 @@ public partial class MainPage : ContentPage
     private static readonly Color Success = Color.FromArgb("#16A34A");
 
     private IClassClient? _client;
+    private readonly AppUpdateService _updateService = new();
     private IClassLoginResult? _login;
     private readonly List<CourseDetailItem> _detailItems = [];
     private readonly Dictionary<string, CourseMessage> _courseMessages = [];
@@ -58,6 +59,7 @@ public partial class MainPage : ContentPage
 
         _autoLoginStarted = true;
         await Task.Delay(250);
+        await CheckForUpdatesAsync(manual: false);
 
         // Auto-login is intentionally disabled so a personal student ID is never baked into releases.
     }
@@ -84,7 +86,7 @@ public partial class MainPage : ContentPage
 
         if (UseVpn && (string.IsNullOrWhiteSpace(vpnUsername) || string.IsNullOrWhiteSpace(vpnPassword)))
         {
-            ShowLoginError("VPN 链接模式当前不可用，请关闭 VPN 后使用直连模式");
+            ShowLoginError("请输入 WebVPN 账号和密码");
             return;
         }
 
@@ -216,8 +218,15 @@ public partial class MainPage : ContentPage
             return;
         }
 
-        SetCourseMessage(_selectedCourse.CourseSchedId, "二维码已在课程卡片内刷新", Primary);
+        SetCourseMessage(_selectedCourse.CourseSchedId, "正在生成二维码...", Primary);
         await RenderCalendarAsync();
+        SetCourseMessage(_selectedCourse.CourseSchedId, "二维码已生成，请确认课程与时间", Success);
+        await RenderCalendarAsync();
+    }
+
+    private async void OnCheckUpdateClicked(object? sender, EventArgs e)
+    {
+        await CheckForUpdatesAsync(manual: true);
     }
 
     private async Task LoadCalendarDataAsync(CancellationToken cancellationToken)
@@ -227,11 +236,66 @@ public partial class MainPage : ContentPage
             return;
         }
 
-        var items = await _client.GetMergedCourseDetailsAsync(7, cancellationToken);
+        var progress = new Progress<string>(message => StatusLabel.Text = message);
+        var items = await _client.GetMergedCourseDetailsAsync(7, progress, cancellationToken);
         _detailItems.Clear();
         _detailItems.AddRange(items);
         StatusLabel.Text = $"已加载 {_detailItems.Count} 条课程记录";
         await RenderCalendarAsync();
+    }
+
+    private async Task CheckForUpdatesAsync(bool manual)
+    {
+        if (CheckUpdateButton is null || UpdateStatusLabel is null)
+        {
+            return;
+        }
+
+        CheckUpdateButton.IsEnabled = false;
+        UpdateStatusLabel.Text = "正在检查更新...";
+        try
+        {
+            var result = await _updateService.CheckAsync();
+            if (!result.IsUpdateAvailable)
+            {
+                UpdateStatusLabel.Text = $"当前已是最新版本 {result.CurrentVersion}";
+                return;
+            }
+
+            if (!manual)
+            {
+                UpdateStatusLabel.Text = $"发现新版本 {result.LatestVersion}，点击检查可下载";
+                return;
+            }
+
+            UpdateStatusLabel.Text = $"发现新版本 {result.LatestVersion}，准备下载安装包...";
+            var confirm = await DisplayAlertAsync(
+                "发现新版本",
+                $"当前版本 {result.CurrentVersion}，最新版本 {result.LatestVersion}。是否下载并安装？",
+                "下载",
+                "稍后");
+            if (!confirm)
+            {
+                UpdateStatusLabel.Text = $"发现新版本 {result.LatestVersion}，可稍后手动检查";
+                return;
+            }
+
+            var progress = new Progress<double>(value =>
+            {
+                UpdateStatusLabel.Text = $"正在下载更新 {Math.Round(value * 100)}%";
+            });
+            var apkPath = await _updateService.DownloadApkAsync(result, progress);
+            UpdateStatusLabel.Text = "下载完成，正在打开安装程序...";
+            _updateService.LaunchInstaller(apkPath);
+        }
+        catch (Exception ex)
+        {
+            UpdateStatusLabel.Text = manual ? $"检查更新失败：{ex.Message}" : "自动检查更新失败，可稍后手动检查";
+        }
+        finally
+        {
+            CheckUpdateButton.IsEnabled = true;
+        }
     }
 
     private async Task RenderCalendarAsync()
@@ -611,15 +675,10 @@ public partial class MainPage : ContentPage
 
     private void UpdateVpnMode()
     {
-        if (UseVpn)
-        {
-            VpnSwitch.IsToggled = false;
-            ShowLoginError("VPN 链接模式当前不可用，请使用直连模式");
-        }
-
-        VpnFieldsPanel.IsVisible = false;
-        LoginButton.Text = "进入课程";
+        VpnFieldsPanel.IsVisible = UseVpn;
+        LoginButton.Text = UseVpn ? "通过 WebVPN 进入课程" : "进入课程";
         ModeBadgeLabel.Text = UseVpn ? "VPN" : "直连";
+        LoginErrorLabel.IsVisible = false;
     }
 
     private void UpdateWeekRange()
@@ -654,6 +713,7 @@ public partial class MainPage : ContentPage
         BusyIndicator.IsVisible = true;
         BusyIndicator.IsRunning = true;
         LoginButton.IsEnabled = false;
+        CheckUpdateButton.IsEnabled = false;
         SignButton.IsEnabled = false;
         QrButton.IsEnabled = false;
         if (SessionPanel.IsVisible)
@@ -679,6 +739,7 @@ public partial class MainPage : ContentPage
             BusyIndicator.IsRunning = false;
             BusyIndicator.IsVisible = false;
             LoginButton.IsEnabled = true;
+            CheckUpdateButton.IsEnabled = true;
             UpdateSelectedPanel();
         }
     }

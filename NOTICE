@@ -11,5 +11,5 @@ The upstream project is licensed under the MIT License. Its copyright and
 permission notice are preserved in LICENSE.
 
 Changes in this repository include a mobile UI, .NET MAUI project structure,
-Android packaging, direct iClass calendar/sign-in workflow, and current
-disabling of the WebVPN/VPN link mode.
+Android packaging, direct iClass calendar/sign-in workflow, WebVPN URL wrapping
+and login flow adaptation, update checking, and mobile release packaging.
