@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="IClassMobile.MainPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+    Shell.NavBarIsVisible="False"
+    Title="北航 iClass">
+
+    <Grid BackgroundColor="{AppThemeBinding Light={StaticResource PageBg}, Dark={StaticResource PageBgDark}}">
+        <RefreshView x:Name="RefreshHost" Refreshing="OnRefreshRequested">
+            <ScrollView>
+                <VerticalStackLayout Padding="22,24,22,30" Spacing="12">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                        <VerticalStackLayout Spacing="5">
+                            <Label Text="北航 iClass" Style="{StaticResource TitleText}" />
+                            <Label x:Name="HeaderSubtitleLabel" Text="输入学号进入课程签到页" Style="{StaticResource Caption}" />
+                        </VerticalStackLayout>
+                        <Border
+                            Grid.Column="1"
+                            Padding="9,6"
+                            BackgroundColor="{AppThemeBinding Light={StaticResource ChipBg}, Dark={StaticResource ChipBgDark}}"
+                            StrokeThickness="0"
+                            VerticalOptions="Start">
+                            <Label
+                                x:Name="ModeBadgeLabel"
+                                Text="直连"
+                                FontFamily="OpenSansSemibold"
+                                FontSize="12"
+                                TextColor="{AppThemeBinding Light={StaticResource ChipText}, Dark={StaticResource ChipTextDark}}" />
+                        </Border>
+                    </Grid>
+
+                    <Border x:Name="LoginPanel" Padding="14" BackgroundColor="{AppThemeBinding Light={StaticResource PanelRaised}, Dark={StaticResource PanelRaisedDark}}">
+                        <VerticalStackLayout Spacing="10">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                                <VerticalStackLayout Spacing="3">
+                                    <Label Text="登录" Style="{StaticResource SectionTitle}" />
+                                    <Label Text="当前仅支持直连模式；VPN 链接模式暂不可用。" Style="{StaticResource Caption}" />
+                                </VerticalStackLayout>
+                                <Switch x:Name="VpnSwitch" Grid.Column="1" IsEnabled="False" Toggled="OnVpnToggled" />
+                            </Grid>
+
+                            <Label Text="学号" FontFamily="OpenSansSemibold" FontSize="12" TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}" />
+                            <Border StrokeThickness="0" BackgroundColor="{AppThemeBinding Light={StaticResource ControlBg}, Dark={StaticResource ControlBgDark}}" Padding="10,0">
+                                <Entry
+                                    x:Name="StudentIdEntry"
+                                    Placeholder="请输入学号"
+                                    Keyboard="Numeric"
+                                    ClearButtonVisibility="WhileEditing" />
+                            </Border>
+
+                            <VerticalStackLayout x:Name="VpnFieldsPanel" Spacing="8" IsVisible="False">
+                                <Label Text="VPN 账号" FontFamily="OpenSansSemibold" FontSize="12" TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}" />
+                                <Border StrokeThickness="0" BackgroundColor="{AppThemeBinding Light={StaticResource ControlBg}, Dark={StaticResource ControlBgDark}}" Padding="10,0">
+                                    <Entry x:Name="VpnUsernameEntry" Placeholder="通常与学号一致" ClearButtonVisibility="WhileEditing" />
+                                </Border>
+
+                                <Label Text="VPN 密码" FontFamily="OpenSansSemibold" FontSize="12" TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}" />
+                                <Border StrokeThickness="0" BackgroundColor="{AppThemeBinding Light={StaticResource ControlBg}, Dark={StaticResource ControlBgDark}}" Padding="10,0">
+                                    <Entry x:Name="VpnPasswordEntry" Placeholder="请输入密码" IsPassword="True" ClearButtonVisibility="WhileEditing" />
+                                </Border>
+                            </VerticalStackLayout>
+
+                            <Button
+                                x:Name="LoginButton"
+                                Text="进入课程"
+                                BackgroundColor="{AppThemeBinding Light={StaticResource PanelRaised}, Dark={StaticResource PanelRaisedDark}}"
+                                TextColor="{AppThemeBinding Light={StaticResource Primary}, Dark={StaticResource TextStrongDark}}"
+                                Clicked="OnLoginClicked" />
+                            <Label x:Name="LoginErrorLabel" IsVisible="False" FontSize="13" TextColor="{StaticResource Danger}" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <Border x:Name="SessionPanel" IsVisible="False" Padding="14" BackgroundColor="{AppThemeBinding Light={StaticResource PanelRaised}, Dark={StaticResource PanelRaisedDark}}">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+                            <VerticalStackLayout Spacing="3">
+                                <Label x:Name="UserLabel" Text="欢迎，同学" Style="{StaticResource SectionTitle}" />
+                                <Label x:Name="StatusLabel" Text="准备加载课程" Style="{StaticResource Caption}" />
+                            </VerticalStackLayout>
+                            <Button
+                                Grid.Column="1"
+                                Text="退出"
+                                BackgroundColor="{AppThemeBinding Light={StaticResource ControlBg}, Dark={StaticResource ControlBgDark}}"
+                                TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}"
+                                Clicked="OnLogoutClicked" />
+                        </Grid>
+                    </Border>
+
+                    <Border x:Name="WeekPanel" IsVisible="False" Padding="12" BackgroundColor="{AppThemeBinding Light={StaticResource PanelRaised}, Dark={StaticResource PanelRaisedDark}}">
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="8" VerticalOptions="Center">
+                            <Button
+                                Text="上一周"
+                                BackgroundColor="{AppThemeBinding Light={StaticResource ControlBg}, Dark={StaticResource ControlBgDark}}"
+                                TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}"
+                                Clicked="OnPreviousWeekClicked" />
+                            <Label
+                                x:Name="WeekRangeLabel"
+                                Grid.Column="1"
+                                HorizontalOptions="Center"
+                                VerticalTextAlignment="Center"
+                                FontFamily="OpenSansSemibold"
+                                FontSize="14"
+                                TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}" />
+                            <Button
+                                Grid.Column="2"
+                                Text="下一周"
+                                BackgroundColor="{AppThemeBinding Light={StaticResource ControlBg}, Dark={StaticResource ControlBgDark}}"
+                                TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}"
+                                Clicked="OnNextWeekClicked" />
+                            <Button
+                                Grid.Column="3"
+                                Text="本周"
+                                BackgroundColor="{AppThemeBinding Light={StaticResource PanelRaised}, Dark={StaticResource PanelRaisedDark}}"
+                                TextColor="{AppThemeBinding Light={StaticResource Primary}, Dark={StaticResource TextStrongDark}}"
+                                Clicked="OnCurrentWeekClicked" />
+                        </Grid>
+                    </Border>
+
+                    <ActivityIndicator x:Name="BusyIndicator" IsVisible="False" IsRunning="False" HeightRequest="28" />
+
+                    <VerticalStackLayout x:Name="CalendarList" Spacing="10" />
+
+                    <Border x:Name="SelectedPanel" IsVisible="False" Padding="0" StrokeThickness="0" BackgroundColor="Transparent">
+                        <VerticalStackLayout Spacing="0">
+                            <Label x:Name="SelectedCourseLabel" IsVisible="False" />
+                            <Button x:Name="SignButton" IsVisible="False" Clicked="OnSignClicked" />
+                            <Button x:Name="QrButton" IsVisible="False" Clicked="OnQrClicked" />
+                            <Label x:Name="SignMessageLabel" IsVisible="False" />
+                            <Border x:Name="QrPanel" IsVisible="False" StrokeThickness="0" BackgroundColor="Transparent" Padding="0">
+                                <Image x:Name="QrImage" WidthRequest="188" HeightRequest="188" Aspect="AspectFit" />
+                            </Border>
+                            <Label x:Name="QrUrlLabel" IsVisible="False" />
+                        </VerticalStackLayout>
+                    </Border>
+                </VerticalStackLayout>
+            </ScrollView>
+        </RefreshView>
+    </Grid>
+</ContentPage>

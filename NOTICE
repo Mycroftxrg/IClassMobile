@@ -1,0 +1,15 @@
+IClassMobile
+============
+
+This project is a mobile .NET MAUI adaptation based on ideas and API/WebVPN
+workflow references from the open source project:
+
+  iclass_buaa
+  https://github.com/zeroduhyy/iclass_buaa
+
+The upstream project is licensed under the MIT License. Its copyright and
+permission notice are preserved in LICENSE.
+
+Changes in this repository include a mobile UI, .NET MAUI project structure,
+Android packaging, direct iClass calendar/sign-in workflow, and current
+disabling of the WebVPN/VPN link mode.

@@ -1,0 +1,21 @@
+bin/
+obj/
+.vs/
+.vscode/
+*.user
+*.suo
+*.binlog
+
+# Local build artifacts and device captures
+*.apk
+*.aab
+*.idsig
+emu-*.png
+emu-*.xml
+iclass-*.xml
+ui-*.png
+ui-*.xml
+
+# OS/editor noise
+Thumbs.db
+.DS_Store
