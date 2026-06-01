@@ -49,16 +49,18 @@
                                     ClearButtonVisibility="WhileEditing" />
                             </Border>
 
+                            <Label x:Name="AuthPasswordLabel" Text="统一认证密码" FontFamily="OpenSansSemibold" FontSize="12" TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}" />
+                            <Border x:Name="AuthPasswordBorder" StrokeThickness="0" BackgroundColor="{AppThemeBinding Light={StaticResource ControlBg}, Dark={StaticResource ControlBgDark}}" Padding="10,0">
+                                <Entry x:Name="AuthPasswordEntry" Placeholder="直连失效时用于统一认证" IsPassword="True" ClearButtonVisibility="WhileEditing" />
+                            </Border>
+
                             <VerticalStackLayout x:Name="VpnFieldsPanel" Spacing="8" IsVisible="False">
                                 <Label Text="VPN 账号" FontFamily="OpenSansSemibold" FontSize="12" TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}" />
                                 <Border StrokeThickness="0" BackgroundColor="{AppThemeBinding Light={StaticResource ControlBg}, Dark={StaticResource ControlBgDark}}" Padding="10,0">
                                     <Entry x:Name="VpnUsernameEntry" Placeholder="通常与学号一致" ClearButtonVisibility="WhileEditing" />
                                 </Border>
 
-                                <Label Text="VPN 密码" FontFamily="OpenSansSemibold" FontSize="12" TextColor="{AppThemeBinding Light={StaticResource TextStrong}, Dark={StaticResource TextStrongDark}}" />
-                                <Border StrokeThickness="0" BackgroundColor="{AppThemeBinding Light={StaticResource ControlBg}, Dark={StaticResource ControlBgDark}}" Padding="10,0">
-                                    <Entry x:Name="VpnPasswordEntry" Placeholder="请输入密码" IsPassword="True" ClearButtonVisibility="WhileEditing" />
-                                </Border>
+                                <Label Text="VPN 密码使用上方统一认证密码" Style="{StaticResource Caption}" />
                             </VerticalStackLayout>
 
                             <Button
@@ -76,7 +78,7 @@
                             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
                                 <VerticalStackLayout Spacing="3">
                                     <Label Text="软件更新" Style="{StaticResource SectionTitle}" />
-                                    <Label x:Name="UpdateStatusLabel" Text="当前版本 1.1.0，可手动检查 GitHub 发布版本。" Style="{StaticResource Caption}" />
+                                    <Label x:Name="UpdateStatusLabel" Text="当前版本 1.2.0，可手动检查 GitHub 发布版本。" Style="{StaticResource Caption}" />
                                 </VerticalStackLayout>
                                 <Button
                                     x:Name="CheckUpdateButton"

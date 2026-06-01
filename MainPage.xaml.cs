@@ -75,7 +75,7 @@ public partial class MainPage : ContentPage
     {
         var studentId = StudentIdEntry.Text?.Trim() ?? string.Empty;
         var vpnUsername = VpnUsernameEntry.Text?.Trim() ?? string.Empty;
-        var vpnPassword = VpnPasswordEntry.Text ?? string.Empty;
+        var authPassword = AuthPasswordEntry.Text ?? string.Empty;
 
         LoginErrorLabel.IsVisible = false;
         if (string.IsNullOrWhiteSpace(studentId))
@@ -84,9 +84,15 @@ public partial class MainPage : ContentPage
             return;
         }
 
-        if (UseVpn && (string.IsNullOrWhiteSpace(vpnUsername) || string.IsNullOrWhiteSpace(vpnPassword)))
+        if (string.IsNullOrWhiteSpace(authPassword))
         {
-            ShowLoginError("请输入 WebVPN 账号和密码");
+            ShowLoginError("请输入统一认证密码");
+            return;
+        }
+
+        if (UseVpn && string.IsNullOrWhiteSpace(vpnUsername))
+        {
+            ShowLoginError("请输入 WebVPN 账号");
             return;
         }
 
@@ -94,11 +100,11 @@ public partial class MainPage : ContentPage
         {
             StudentIdEntry.Unfocus();
             VpnUsernameEntry.Unfocus();
-            VpnPasswordEntry.Unfocus();
+            AuthPasswordEntry.Unfocus();
 
             _client?.Dispose();
             _client = new IClassClient(UseVpn);
-            _login = await _client.LoginAsync(new IClassLoginInput(studentId, vpnUsername, vpnPassword), token);
+            _login = await _client.LoginAsync(new IClassLoginInput(studentId, vpnUsername, authPassword), token);
 
             LoginPanel.IsVisible = false;
             SessionPanel.IsVisible = true;

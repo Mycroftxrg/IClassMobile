@@ -7,9 +7,15 @@ workflow references from the open source project:
   iclass_buaa
   https://github.com/zeroduhyy/iclass_buaa
 
-The upstream project is licensed under the MIT License. Its copyright and
-permission notice are preserved in LICENSE.
+It also references the current BUAA local sign-in and WebVPN workflow used by:
+
+  UBAA
+  https://github.com/BUAASubnet/UBAA
+
+The referenced upstream projects are licensed under the MIT License. Their
+copyright and permission notices are preserved in LICENSE.
 
 Changes in this repository include a mobile UI, .NET MAUI project structure,
-Android packaging, direct iClass calendar/sign-in workflow, WebVPN URL wrapping
-and login flow adaptation, update checking, and mobile release packaging.
+Android packaging, personal-use iClass calendar/sign-in workflow, WebVPN URL
+wrapping and login flow adaptation, update checking, and mobile release
+packaging.

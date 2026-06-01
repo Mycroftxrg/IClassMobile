@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -13,8 +12,8 @@ public sealed class IClassClient : IDisposable
     private const string DirectBase = "https://iclass.buaa.edu.cn:8347";
     private const string Direct8081Base = "http://iclass.buaa.edu.cn:8081";
     private const string MyCenterUrl = "https://iclass.buaa.edu.cn:8346/?type=jumpMyCenter";
-    private const string VpnServiceLogin = "https://d.buaa.edu.cn/login?cas_login=true";
-    private static readonly string SsoVpnLogin = WebVpnUrl.Wrap($"https://sso.buaa.edu.cn/login?service={Escape(VpnServiceLogin)}");
+    private const string DirectSsoLogin = "https://sso.buaa.edu.cn/login";
+    private static readonly string SsoVpnLogin = WebVpnUrl.Wrap(DirectSsoLogin);
     private const long VpnOffsetCorrectionMs = -1000;
 
     private static readonly IClassUrls DirectUrls = new(
@@ -65,10 +64,15 @@ public sealed class IClassClient : IDisposable
 
         if (_useVpn)
         {
-            await VpnLoginAsync(input.VpnUsername ?? string.Empty, input.VpnPassword ?? string.Empty, cancellationToken);
+            await VpnLoginAsync(input.VpnUsername ?? string.Empty, input.AuthPassword ?? string.Empty, cancellationToken);
+            await EnterIclassServiceAsync(cancellationToken);
+        }
+        else
+        {
+            await DirectSsoLoginAsync(studentId, input.AuthPassword ?? string.Empty, cancellationToken);
         }
 
-        await FetchUserInfoWithCandidatesAsync(studentId, cancellationToken);
+        await FetchUserInfoWithCandidatesAsync(studentId, input.AuthPassword ?? string.Empty, cancellationToken);
 
         if (User is null || string.IsNullOrWhiteSpace(SessionId))
         {
@@ -398,18 +402,50 @@ public sealed class IClassClient : IDisposable
         using var request = new HttpRequestMessage(HttpMethod.Post, SsoVpnLogin);
         request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
         request.Headers.TryAddWithoutValidation("Referer", SsoVpnLogin);
-        request.Content = new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            ["username"] = username,
-            ["password"] = password,
-            ["submit"] = "登录",
-            ["type"] = "username_password",
-            ["execution"] = execution,
-            ["_eventId"] = "submit"
-        });
+        request.Content = new FormUrlEncodedContent(BuildCasLoginParameters(loginHtml, username, password, execution));
 
         using var loginResponse = await _http.SendAsync(request, cancellationToken);
-        await HandleLoginResponseAsync(loginResponse, cancellationToken);
+        await EnsureSsoLoginAcceptedAsync(loginResponse, cancellationToken);
+    }
+
+    private async Task DirectSsoLoginAsync(string username, string password, CancellationToken cancellationToken)
+    {
+        username = username.Trim();
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password))
+        {
+            throw new InvalidOperationException("直连学号登录已被 iClass 拒绝，请输入统一认证密码后重试。");
+        }
+
+        using var loginPage = await _http.GetAsync(DirectSsoLogin, cancellationToken);
+        if (IsRedirect(loginPage.StatusCode))
+        {
+            var location = loginPage.Headers.Location?.ToString();
+            if (!string.IsNullOrWhiteSpace(location))
+            {
+                using var _ = await FollowGetRedirectsAsync(ResolveUrl(DirectSsoLogin, location), cancellationToken);
+                return;
+            }
+        }
+
+        var loginHtml = await loginPage.Content.ReadAsStringAsync(cancellationToken);
+        if ((int)loginPage.StatusCode >= 500)
+        {
+            throw new InvalidOperationException($"Server error: {(int)loginPage.StatusCode}");
+        }
+
+        var execution = ExtractExecution(loginHtml);
+        if (string.IsNullOrWhiteSpace(execution))
+        {
+            throw new InvalidOperationException("Could not find execution parameter");
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, DirectSsoLogin);
+        request.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+        request.Headers.TryAddWithoutValidation("Referer", DirectSsoLogin);
+        request.Content = new FormUrlEncodedContent(BuildCasLoginParameters(loginHtml, username, password, execution));
+
+        using var loginResponse = await _http.SendAsync(request, cancellationToken);
+        await EnsureSsoLoginAcceptedAsync(loginResponse, cancellationToken);
     }
 
     private async Task HandleLoginResponseAsync(HttpResponseMessage response, CancellationToken cancellationToken)
@@ -463,9 +499,9 @@ public sealed class IClassClient : IDisposable
         }
     }
 
-    private async Task<string> ResolveLoginNameAsync(string fallback, CancellationToken cancellationToken)
+    private async Task<string> ResolveLoginNameAsync(string fallback, bool useVpn, CancellationToken cancellationToken)
     {
-        var current = _useVpn ? WebVpnUrl.Wrap(MyCenterUrl) : MyCenterUrl;
+        var current = useVpn ? WebVpnUrl.Wrap(MyCenterUrl) : MyCenterUrl;
         for (var i = 0; i < 8; i++)
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, current);
@@ -490,7 +526,7 @@ public sealed class IClassClient : IDisposable
 
                 if (IsRedirect(response.StatusCode))
                 {
-                    current = _useVpn ? WebVpnUrl.Wrap(normalized) : normalized;
+                    current = useVpn ? WebVpnUrl.Wrap(normalized) : normalized;
                     continue;
                 }
             }
@@ -526,9 +562,43 @@ public sealed class IClassClient : IDisposable
         throw new InvalidOperationException("重定向次数过多");
     }
 
-    private async Task FetchUserInfoAsync(string username, CancellationToken cancellationToken)
+    private async Task EnsureSsoLoginAcceptedAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
-        var url = WithQuery(Urls.UserLogin, new Dictionary<string, string>
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            throw new InvalidOperationException("登录失败：账号或密码错误，或密码过弱需先修改后再登录");
+        }
+
+        if (IsRedirect(response.StatusCode))
+        {
+            var redirectUrl = response.Headers.Location?.ToString();
+            if (string.IsNullOrWhiteSpace(redirectUrl))
+            {
+                throw new InvalidOperationException("登录跳转缺少重定向地址");
+            }
+
+            using var _ = await FollowGetRedirectsAsync(ResolveUrl(response.RequestMessage?.RequestUri?.ToString() ?? DirectSsoLogin, redirectUrl), cancellationToken);
+            return;
+        }
+
+        var body = await response.Content.ReadAsStringAsync(cancellationToken);
+        var loginError = ExtractLoginError(body);
+        if (!string.IsNullOrWhiteSpace(loginError))
+        {
+            throw new InvalidOperationException(loginError);
+        }
+
+        if (body.Contains("name=\"execution\"", StringComparison.OrdinalIgnoreCase) ||
+            body.Contains("name='execution'", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("账号或密码错误，请重试");
+        }
+    }
+
+    private async Task FetchUserInfoAsync(string username, CancellationToken cancellationToken, bool forceDirect = false)
+    {
+        var targetUrls = forceDirect ? DirectUrls : Urls;
+        var url = WithQuery(targetUrls.UserLogin, new Dictionary<string, string>
         {
             ["phone"] = username,
             ["password"] = string.Empty,
@@ -578,38 +648,46 @@ public sealed class IClassClient : IDisposable
         SessionId = sessionId;
     }
 
-    private async Task FetchUserInfoWithCandidatesAsync(string studentId, CancellationToken cancellationToken)
+    private async Task FetchUserInfoWithCandidatesAsync(string studentId, string authPassword, CancellationToken cancellationToken)
     {
-        var candidates = new List<string> { studentId };
-        var resolvedLoginName = await ResolveLoginNameAsync(studentId, cancellationToken);
-        if (!resolvedLoginName.Equals(studentId, StringComparison.OrdinalIgnoreCase))
+        var loginName = await ResolveLoginNameAsync(studentId, _useVpn, cancellationToken);
+        if (_useVpn && loginName.Equals(studentId, StringComparison.OrdinalIgnoreCase))
         {
-            candidates.Add(resolvedLoginName);
+            await DirectSsoLoginAsync(studentId, authPassword, cancellationToken);
+            loginName = await ResolveLoginNameAsync(studentId, useVpn: false, cancellationToken);
         }
 
-        var hashedLoginName = BuildMd5Base64LoginName(studentId);
-        if (!candidates.Contains(hashedLoginName, StringComparer.OrdinalIgnoreCase))
+        if (loginName.Equals(studentId, StringComparison.OrdinalIgnoreCase))
         {
-            candidates.Add(hashedLoginName);
+            throw new InvalidOperationException("未能从 iClass 跳转页解析 loginName，请确认统一认证登录是否成功。");
         }
 
-        IClassApiException? lastApiError = null;
-        foreach (var candidate in candidates.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.OrdinalIgnoreCase))
+        try
         {
+            await FetchUserInfoAsync(loginName, cancellationToken);
+            return;
+        }
+        catch (InvalidOperationException ex) when (_useVpn && ex.Message.Contains("HTTP 状态: 302", StringComparison.Ordinal))
+        {
+            await EnterIclassServiceAsync(cancellationToken);
             try
             {
-                await FetchUserInfoAsync(candidate, cancellationToken);
+                await FetchUserInfoAsync(loginName, cancellationToken);
                 return;
             }
-            catch (IClassApiException ex) when (ex.ErrorCode == "106")
+            catch (InvalidOperationException retryEx) when (retryEx.Message.Contains("HTTP 状态: 302", StringComparison.Ordinal))
             {
-                lastApiError = ex;
+                // Android WebVPN can keep redirecting the app-login endpoint even after
+                // service activation. Use direct app login with the same resolved loginName.
             }
-        }
 
-        throw new InvalidOperationException(lastApiError?.ErrorMessage is { Length: > 0 }
-            ? $"iClass API 返回错误: {lastApiError.ErrorMessage}"
-            : "iClass 不接受当前学号作为登录名，请尝试 WebVPN 模式或确认学校接口是否已调整。");
+            await FetchUserInfoAsync(loginName, cancellationToken, forceDirect: true);
+            return;
+        }
+        catch (IClassApiException ex) when (ex.ErrorCode == "106")
+        {
+            throw new InvalidOperationException("签到账号不存在，请联系管理员");
+        }
     }
 
     private async Task<long> GetServerTimestampAsync(CancellationToken cancellationToken)
@@ -743,6 +821,85 @@ public sealed class IClassClient : IDisposable
         return string.Empty;
     }
 
+    private static Dictionary<string, string> BuildCasLoginParameters(string html, string username, string password, string execution)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in Regex.Matches(html, "<input\\b([^>]*)>", RegexOptions.IgnoreCase))
+        {
+            var attrs = ParseHtmlAttributes(match.Groups[1].Value);
+            var name = attrs.GetValueOrDefault("name")?.Trim();
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                continue;
+            }
+
+            var type = attrs.GetValueOrDefault("type")?.Trim().ToLowerInvariant() ?? string.Empty;
+            if (type is "submit" or "button" or "image")
+            {
+                continue;
+            }
+
+            if (type == "checkbox" && !attrs.ContainsKey("checked"))
+            {
+                continue;
+            }
+
+            values[name] = attrs.GetValueOrDefault("value") ?? string.Empty;
+        }
+
+        values["username"] = username;
+        values["password"] = password;
+        values["submit"] = "登录";
+        values["type"] = "username_password";
+        values["execution"] = execution;
+        values["_eventId"] = "submit";
+        return values;
+    }
+
+    private static Dictionary<string, string> ParseHtmlAttributes(string attributes)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in Regex.Matches(attributes, "([a-zA-Z_:][-a-zA-Z0-9_:.]*)\\s*=\\s*['\"]([^'\"]*)['\"]", RegexOptions.IgnoreCase))
+        {
+            values[match.Groups[1].Value] = WebUtility.HtmlDecode(match.Groups[2].Value);
+        }
+
+        if (Regex.IsMatch(attributes, "\\bchecked\\b", RegexOptions.IgnoreCase))
+        {
+            values["checked"] = "checked";
+        }
+
+        return values;
+    }
+
+    private static string ExtractLoginError(string html)
+    {
+        foreach (var pattern in new[]
+        {
+            "<div[^>]*class=['\"][^'\"]*tip-text[^'\"]*['\"][^>]*>([\\s\\S]*?)</div>",
+            "<div[^>]*id=['\"]errorDiv['\"][^>]*>([\\s\\S]*?)</div>",
+            "<div[^>]*class=['\"][^'\"]*errors[^'\"]*['\"][^>]*>([\\s\\S]*?)</div>",
+            "<p[^>]*class=['\"][^'\"]*errors[^'\"]*['\"][^>]*>([\\s\\S]*?)</p>",
+            "<span[^>]*class=['\"][^'\"]*errors[^'\"]*['\"][^>]*>([\\s\\S]*?)</span>"
+        })
+        {
+            var match = Regex.Match(html, pattern, RegexOptions.IgnoreCase);
+            if (!match.Success)
+            {
+                continue;
+            }
+
+            var text = Regex.Replace(match.Groups[1].Value, "<[^>]+>", " ");
+            text = WebUtility.HtmlDecode(Regex.Replace(text, "\\s+", " ")).Trim();
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text;
+            }
+        }
+
+        return string.Empty;
+    }
+
     private static JsonDocument? ParseJsonOrNull(string body)
     {
         try
@@ -800,9 +957,35 @@ public sealed class IClassClient : IDisposable
 
     private static string ResolveUrl(string baseUrl, string location)
     {
-        return Uri.TryCreate(location, UriKind.Absolute, out var absolute)
-            ? absolute.ToString()
-            : new Uri(new Uri(baseUrl), location).ToString();
+        var target = (location ?? string.Empty).Trim();
+        if (Uri.TryCreate(target, UriKind.Absolute, out var absolute))
+        {
+            if (absolute.Scheme is "http" or "https")
+            {
+                return absolute.ToString();
+            }
+
+            if (absolute.Scheme.Equals("file", StringComparison.OrdinalIgnoreCase) && WebVpnUrl.IsGatewayUrl(baseUrl))
+            {
+                var path = absolute.AbsolutePath.Replace('\\', '/');
+                if (string.IsNullOrWhiteSpace(path) || path == "/")
+                {
+                    path = target["file:".Length..].TrimStart('/');
+                    path = "/" + path;
+                }
+
+                return WebVpnUrl.GatewayOrigin + path + absolute.Query + absolute.Fragment;
+            }
+
+            throw new InvalidOperationException($"不支持的重定向协议: {absolute.Scheme}");
+        }
+
+        if (target.StartsWith("file/", StringComparison.OrdinalIgnoreCase))
+        {
+            target = "/" + target;
+        }
+
+        return new Uri(new Uri(baseUrl), target).ToString();
     }
 
     private static string ExtractLoginName(string url)
@@ -822,12 +1005,6 @@ public sealed class IClassClient : IDisposable
         }
 
         return string.Empty;
-    }
-
-    private static string BuildMd5Base64LoginName(string studentId)
-    {
-        var md5Hex = Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(studentId.Trim())));
-        return Convert.ToBase64String(Encoding.UTF8.GetBytes(md5Hex));
     }
 
     private static bool LooksLikeIclassUrl(string url)
@@ -879,7 +1056,7 @@ public sealed class IClassApiException(string errorCode, string errorMessage, st
     public string ErrorMessage { get; } = errorMessage;
 }
 
-public sealed record IClassLoginInput(string StudentId, string? VpnUsername, string? VpnPassword);
+public sealed record IClassLoginInput(string StudentId, string? VpnUsername, string? AuthPassword);
 
 public sealed record IClassLoginResult(string UserId, string UserName, string SessionId, bool UseVpn);
 

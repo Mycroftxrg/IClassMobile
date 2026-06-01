@@ -10,6 +10,8 @@ internal static class WebVpnUrl
     private static readonly byte[] KeyBytes = Encoding.UTF8.GetBytes(KeyText);
     private static readonly byte[] IvBytes = Encoding.UTF8.GetBytes(KeyText);
 
+    public const string GatewayOrigin = "https://d.buaa.edu.cn";
+
     public static string Wrap(string url)
     {
         if (!Uri.TryCreate(url, UriKind.Absolute, out var parsed))

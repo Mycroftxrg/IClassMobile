@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.2.0 - 2026-06-01
+
+- 同步 GitHub 最新 UBAA 签到实现：统一认证后从 iClass MyCenter 跳转解析 `loginName`，不再依赖已失效的学号直登。
+- 修复 WebVPN 重定向中 `file/...` 路径可能被识别为不支持 URI scheme 的问题。
+- 签到提交对齐 UBAA 最新表单请求方式，并在请求头携带 `sessionId`。
+- 直连与 WebVPN 登录页统一使用统一认证密码，WebVPN 额外填写 VPN 账号。
+
 ## 1.1.0 - 2026-06-01
 
 - 恢复并修复 WebVPN 登录入口，按 WebVPN 网关规则动态封装 iClass、SSO 与签到接口地址。
