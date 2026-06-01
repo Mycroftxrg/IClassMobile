@@ -1,5 +1,11 @@
 # 更新日志
 
+## 1.2.1 - 2026-06-01
+
+- 修复部分手机网络下 GitHub Releases API 返回 `403 Forbidden` 导致自动更新检测失败的问题。
+- 更新检查优先读取仓库静态更新清单，并保留 GitHub Releases API 作为备用路径。
+- GitHub API 失败时显示更具体的错误信息，便于判断是限流、网络拦截还是服务端拒绝。
+
 ## 1.2.0 - 2026-06-01
 
 - 同步 GitHub 最新 UBAA 签到实现：统一认证后从 iClass MyCenter 跳转解析 `loginName`，不再依赖已失效的学号直登。

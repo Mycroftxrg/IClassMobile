@@ -13,6 +13,8 @@ namespace IClassMobile.Services;
 
 public sealed class AppUpdateService
 {
+    private const string PrimaryUpdateManifest = "https://cdn.jsdelivr.net/gh/Mycroftxrg/IClassMobile@main/update-manifest.json";
+    private const string SecondaryUpdateManifest = "https://raw.githubusercontent.com/Mycroftxrg/IClassMobile/main/update-manifest.json";
     private const string LatestReleaseApi = "https://api.github.com/repos/Mycroftxrg/IClassMobile/releases/latest";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient _httpClient = new(new SocketsHttpHandler());
@@ -20,6 +22,7 @@ public sealed class AppUpdateService
     public AppUpdateService()
     {
         _httpClient.Timeout = TimeSpan.FromSeconds(30);
+        _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         _httpClient.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("IClassMobile", CurrentVersionText));
     }
 
@@ -30,11 +33,69 @@ public sealed class AppUpdateService
 
     public async Task<UpdateCheckResult> CheckAsync(CancellationToken cancellationToken = default)
     {
+        Exception? manifestError = null;
+        foreach (var manifestUrl in new[] { PrimaryUpdateManifest, SecondaryUpdateManifest })
+        {
+            try
+            {
+                return await CheckManifestAsync(manifestUrl, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                manifestError = ex;
+            }
+        }
+
+        try
+        {
+            return await CheckGitHubReleaseApiAsync(cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            var detail = manifestError is null ? ex.Message : $"{ex.Message}；备用清单不可用：{manifestError.Message}";
+            throw new InvalidOperationException($"检查更新失败：{detail}", ex);
+        }
+    }
+
+    private async Task<UpdateCheckResult> CheckManifestAsync(string manifestUrl, CancellationToken cancellationToken)
+    {
+        using var response = await _httpClient.GetAsync(manifestUrl, cancellationToken);
+        var raw = await response.Content.ReadAsStringAsync(cancellationToken);
+        if (!response.IsSuccessStatusCode)
+        {
+            throw new InvalidOperationException($"{(int)response.StatusCode} {response.ReasonPhrase}");
+        }
+
+        var manifest = JsonSerializer.Deserialize<UpdateManifest>(raw, JsonOptions)
+            ?? throw new InvalidOperationException("更新清单格式无效。");
+        if (string.IsNullOrWhiteSpace(manifest.LatestVersion) ||
+            string.IsNullOrWhiteSpace(manifest.DownloadUrl) ||
+            !manifest.DownloadUrl.EndsWith(".apk", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("更新清单缺少版本号或 APK 下载地址。");
+        }
+
+        var latestVersionText = manifest.LatestVersion.Trim().TrimStart('v', 'V');
+        var current = ParseVersion(CurrentVersionText);
+        var latest = ParseVersion(latestVersionText);
+        return new UpdateCheckResult(
+            IsUpdateAvailable: latest > current,
+            CurrentVersion: CurrentVersionText,
+            LatestVersion: latestVersionText,
+            DownloadUrl: manifest.DownloadUrl,
+            ReleaseNotes: manifest.ReleaseNotes?.Trim() ?? string.Empty);
+    }
+
+    private async Task<UpdateCheckResult> CheckGitHubReleaseApiAsync(CancellationToken cancellationToken)
+    {
         using var response = await _httpClient.GetAsync(LatestReleaseApi, cancellationToken);
         var raw = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"检查更新失败：{(int)response.StatusCode} {response.ReasonPhrase}");
+            var apiMessage = ExtractGitHubErrorMessage(raw);
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(apiMessage)
+                ? $"{(int)response.StatusCode} {response.ReasonPhrase}"
+                : $"{(int)response.StatusCode} {apiMessage}");
         }
 
         var release = JsonSerializer.Deserialize<GitHubRelease>(raw, JsonOptions)
@@ -132,6 +193,26 @@ public sealed class AppUpdateService
 
         return Version.TryParse(clean, out var parsed) ? parsed : new Version(0, 0);
     }
+
+    private static string ExtractGitHubErrorMessage(string raw)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return doc.RootElement.TryGetProperty("message", out var message)
+                ? message.GetString() ?? string.Empty
+                : string.Empty;
+        }
+        catch (JsonException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private sealed record UpdateManifest(
+        string LatestVersion,
+        string DownloadUrl,
+        string? ReleaseNotes);
 
     private sealed record GitHubRelease(
         [property: JsonPropertyName("tag_name")]

@@ -1,0 +1,5 @@
+{
+  "latestVersion": "1.2.1",
+  "downloadUrl": "https://github.com/Mycroftxrg/IClassMobile/releases/download/v1.2.1/IClassMobile-1.2.1-android-arm64.apk",
+  "releaseNotes": "修复部分手机网络下 GitHub API 返回 403 时自动更新检测失败的问题。更新检查现在优先读取静态更新清单，并保留 GitHub Releases API 作为备用。"
+}
